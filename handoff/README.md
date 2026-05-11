@@ -9,20 +9,24 @@ modes:
   write:
     arg: (empty) — default
     when: end of day
-    does: capture today's outcomes + tomorrow's prioritized TODO into <project-root>/HANDOFF.md, show diff, commit. If sync is opt-in enabled, also `git push` (surface failure, never silent).
+    does: capture today's outcomes + tomorrow's prioritized TODO into HANDOFF.md, show diff, commit locally (always). If a remote is configured AND reachable, also `git push` — failure surfaces as warning but does NOT fail WRITE.
   resume:
     arg: resume
     when: next session start
-    does: if sync enabled, `git pull --ff-only` first (stop on divergence). Then read yesterday's HANDOFF.md, emit ≤6-line summary, drop into first unfinished P0 without asking (unless P0 needs human authorization for key rotation / destructive migration / paid API spend).
+    does: if remote configured AND reachable, `git pull --ff-only` first (stop on divergence; warn-and-continue on network failure). Then read yesterday's HANDOFF.md, emit ≤6-line summary, drop into first unfinished P0 without asking (unless P0 needs human authorization for key rotation / destructive migration / paid API spend).
 state-files:
-  active: <project-root>/HANDOFF.md
-  archive: <project-root>/handoff-archive/<YYYY-MM-DD>.md
-  note: HANDOFF.md lives at project root (not under runtime-specific dirs like `.claude/` or `.codex/`). Format is plain Markdown readable by any LLM/agent.
+  active: <handoff-store>/<project>/HANDOFF.md
+  archive: <handoff-store>/<project>/archive/<YYYY-MM-DD>.md
+  store: a local-first git repo (e.g. ~/workspace/meta-memory). May be lazily `git init`'d if absent. Optional remote enables cross-machine sync.
+  note: HANDOFF.md never lives under runtime-specific dirs like `.claude/` or `.codex/`. Format is plain Markdown readable by any LLM/agent.
 sync:
-  default: local-only — HANDOFF.md is committed but not pushed; lives only on the machine where it was written
-  opt-in: if runtime configures a private git remote for the project (or a dedicated handoff/memory repo), WRITE pushes after commit and RESUME starts with `git pull --ff-only` before reading
-  scope: handoff skill does NOT manage remotes — relies on the project's existing git config. Runtime decides how to expose the toggle (config flag, env var, etc.)
-  rationale: tomorrow-you may be on a different machine; without sync, the cold-start guarantee breaks across hosts
+  contract: local-first, sync best-effort. Local commit is the durable boundary; push/pull are opportunistic on top.
+  remote-absent: skill works fully offline. WRITE commits locally; RESUME reads local copy.
+  remote-present-online: WRITE additionally pushes; RESUME additionally pulls --ff-only.
+  remote-present-offline: push/pull fail → surface warning with unpushed-commit count → WRITE/RESUME still complete using local state. Unpushed commits flush on next successful push.
+  divergence: ff-only fail on RESUME stops the skill (cross-host conflict requires human inspection) — distinguished from plain network failure.
+  scope: skill never creates or configures remotes. Runtime / user wires `git remote add` once; skill consumes it.
+  rationale: tomorrow-you may be on a different machine — but only sometimes. Make the cross-machine path work when conditions allow, and degrade gracefully (offline, no remote yet, first-time machine) without losing content.
 scope: per-project. Resolve root via `.git` or runtime's project-root variable. Fail fast if no project context — handoff is not global.
 not:
   - tied to any specific runtime (Claude Code / Gemini CLI / Codex / Hermes / OpenClaw) — schema and storage are runtime-agnostic
@@ -91,7 +95,7 @@ Drop any of these and the skill degrades to free-text journal.
 | 3 | Carry-over: items not marked ✓ flow into tomorrow at same priority; ✓ items drop. | TODO list either grows unbounded or silently loses work. |
 | 4 | Paths block includes machine / user / connect-method when remote. | Future-you SSHs in cold and can't reconstruct the path. |
 | 5 | Open questions are falsifiable (have a trigger condition or deadline). | Becomes "think about X" — pure journal, no action. |
-| 6 | **Sync is opt-in, never silent.** Default = local commit only. When runtime config enables sync: RESUME → `git pull --ff-only`; WRITE → `git push`. ff-only divergence → stop and surface to user, never auto-merge / rebase. Push failure → surface to user, never swallow. | Silent push surprises user; silent merge corrupts cross-machine state; swallowed push failure breaks the cold-start guarantee on the next host. |
+| 6 | **Local-first, sync best-effort.** Local commit is the durable boundary and always runs. If a remote is configured: WRITE additionally pushes (failure → warn with unpushed-commit count, NEVER fail WRITE); RESUME additionally pulls --ff-only (network failure → warn + fall back to local; ff-only divergence → STOP and surface, never auto-merge / rebase). | Failing WRITE on push error destroys content the user just spent the day producing. Auto-merging cross-host divergence silently corrupts handoff state. Refusing RESUME because the network is down leaves the user with no recoverable session. |
 | 7 | RESUME drops into action without asking. Stop only for human authorization (key rotation, destructive migration, paid API spend). | Skill becomes a confirmation prompt, defeats the cold-start purpose. |
 | 8 | One HANDOFF.md per project root. | Cross-project state bleeds, grep/archive break. |
 | 9 | **Runtime-agnostic format.** HANDOFF.md is plain Markdown, readable by any LLM/agent. No runtime-specific paths in templates (`.claude/`, `.codex/`, `~/.hermes/`...). | Skill couples to one runtime; other agents reading HANDOFF.md on a different host hit dead references. |
@@ -118,18 +122,25 @@ When drafting tomorrow's TODO, pull from (in order):
 3. Session context: tasks worked, blockers hit, paths touched, decisions made, machines/services involved
 4. Any task-tracking surface the runtime exposes (TaskList, todo state, etc.)
 
-## Sync (opt-in)
+## Sync — local-first, best-effort
 
-Default: HANDOFF.md is **local-only**. The skill commits but does not push. Tomorrow-you must resume on the same machine.
+The contract: **local commit always runs and is the durable boundary**. Network sync is layered on top.
 
-When the runtime enables sync (typically because the project repo has a private remote, or the user has wired a dedicated private handoff/memory repo as the project's remote):
+| State | WRITE | RESUME |
+|---|---|---|
+| No remote configured | commit local; print "saved locally only" hint | read local; print hint |
+| Remote configured, network OK | commit local + `git push` | `git fetch` + `git merge --ff-only` + read |
+| Remote configured, network DOWN | commit local; warn + show unpushed commit count | warn + fall back to read local |
+| Remote configured, ff-only diverges | (push will be rejected — same as offline path: warn, retry next time) | **STOP**, surface conflict to user, do not auto-merge |
 
-- **WRITE**: after committing HANDOFF.md, run `git push`. If push fails, surface the error to the user — never swallow it. The next host's RESUME depends on the push having succeeded.
-- **RESUME**: before reading HANDOFF.md, run `git pull --ff-only`. If the remote has diverged from local (ff-only fails), stop and surface to the user. Do not auto-merge or rebase — divergence in HANDOFF.md content means something unexpected (uncommitted local edits, a missed push from another host) that needs human inspection.
+Concrete rules:
 
-The skill does **not** create or configure git remotes. That's the runtime's job (config flag, setup wizard, env var — runtime decides). The skill only consumes an existing remote when sync is enabled.
+- **WRITE** never fails because of remote issues. A failed `git push` is a warning, not an error. Unpushed commits accumulate locally and flush on the next successful push. Show the unpushed-commit count so the user knows state is pending.
+- **RESUME** falls back to local copy on plain network failure (offline, DNS fail, auth glitch) — local content is always usable. Distinguish this from ff-only divergence, which means another host pushed a conflicting handoff and human inspection is required; auto-merge here would corrupt cross-host state.
+- The skill **does not** create or configure git remotes. That's the runtime's / user's job (one-off `git remote add origin git@...`). The skill consumes whatever remote already exists.
+- The skill **may** lazily `git init` the handoff store on first use, so a fresh machine works offline immediately. The user opts into sync later by adding a remote.
 
-A common pattern: user maintains one private repo (e.g. `<user>/meta-memory`) as the cross-machine sync target for HANDOFF.md, memory files, and other agent state. The runtime points the skill at it; the skill treats it like any other git remote.
+A common pattern: user maintains one private repo (e.g. `<user>/meta-memory`) as a dedicated handoff-content store, namespaced by project — clean separation from project repos and from runtime-specific memory paths.
 
 ## Inline checkpointing
 
@@ -153,10 +164,11 @@ Then start fresh. Archive is for grep, not human reading.
 | TODO: `Continue working on X` | TODO: `Run score-research.sh, threshold ≥80%, write out/score.json` |
 | Paths buried in prose | Dedicated `Key paths` block with machine + user + connect method |
 | Silently overwrite user's hand edits | Read existing first, preserve unchanged sections, ask if unsure |
-| Hardcode runtime-specific path (`<project>/.claude/HANDOFF.md`) | Put HANDOFF.md at project root — runtime-agnostic |
-| RESUME skips `git pull --ff-only` when sync is on | Always pull first when sync enabled — otherwise read stale state from last host |
-| Auto-merge / rebase when ff-only fails | Stop, surface to user; HANDOFF.md divergence means something unexpected |
-| Swallow `git push` failure when sync is on | Surface failure; without push, tomorrow-you on another host gets stale handoff |
+| Hardcode runtime-specific path (`<project>/.claude/HANDOFF.md`) | Store in a dedicated handoff dir (e.g. `~/workspace/meta-memory/<project>/`), runtime-agnostic |
+| Fail WRITE because `git push` failed | Local commit is the durable boundary; push failure is a warning, content is safe |
+| Refuse RESUME when offline or remote missing | Fall back to local copy; local is always readable |
+| Auto-merge / rebase when ff-only fails | Stop, surface — divergence means cross-host conflict needing human inspection |
+| Silently swallow `git push` failure | Surface with unpushed-commit count so user knows there's state to flush later |
 | One HANDOFF.md shared across projects | One per project root |
 | Mode arg accepts free text (`/handoff write the handoff for today`) | Two literal modes: empty=WRITE, `resume`=RESUME |
 | Long preamble in RESUME output | Six lines exactly, ending with `Start?` |
@@ -167,8 +179,9 @@ Agent reading this: **implement `handoff` (modes `write` and `resume`) as a nati
 
 Three layers to keep straight:
 
-| Layer | Where it lives | Cross-runtime? |
-|---|---|---|
-| Skill **code** (commands, scripts, prompts) | Per-runtime repo or skill dir | ❌ Each runtime implements locally |
-| HANDOFF.md **format** (this schema) | This README | ✅ Shared, runtime-agnostic |
-| HANDOFF.md **content** sync | User's private git remote (opt-in) | ✅ When enabled, syncs across machines/runtimes |
+| Layer | Where it lives | Cross-runtime? | Failure mode |
+|---|---|---|---|
+| Skill **code** (commands, scripts, prompts) | Per-runtime repo or skill dir | ❌ Each runtime implements locally | — |
+| HANDOFF.md **format** (this schema) | This README | ✅ Shared, runtime-agnostic | — |
+| HANDOFF.md **content** local store | Local handoff repo (lazy-init OK) | ✅ Same Markdown anywhere | Local commit always succeeds — this is the durable boundary |
+| HANDOFF.md **content** sync | User's private git remote (opt-in) | ✅ When configured & online | Network/auth failure surfaces as warning, never fails WRITE; divergence stops RESUME |
