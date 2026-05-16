@@ -91,6 +91,8 @@ Section headers can be in any language — pick one and keep it stable across ha
 
 `What got done today` doubles as the **cross-machine / cross-runtime bulletin**: other agents reading another project's HANDOFF via the Cross-project surface in RESUME pull the first 1–2 bullets to judge whether to borrow or deploy. Write the bullets for an LLM/agent on a different host (concrete artifact path, command, JD-ID), not for human reflection.
 
+**HANDOFF is the index, project KB is the body.** Each bullet must be ≤1 line and carry a **pointer** — JD-ID, file path, commit hash, or canonical URL — not full detail. When an agent on another machine needs to go deeper (e.g. to decide whether to borrow), it `git pull`s the relevant project repo (e.g. `~/workspace/notes`) and resolves the pointer there. Long-form context never belongs in HANDOFF.md; it bloats the cross-project surface and decays fast.
+
 ## Invariants
 
 Drop any of these and the skill degrades to free-text journal.
@@ -108,6 +110,7 @@ Drop any of these and the skill degrades to free-text journal.
 | 9 | One HANDOFF.md per project root. | Cross-project state bleeds, grep/archive break. |
 | 10 | **Runtime-agnostic format.** HANDOFF.md is plain Markdown, readable by any LLM/agent. No runtime-specific paths in templates (`.claude/`, `.codex/`, `~/.hermes/`...). | Skill couples to one runtime; other agents reading HANDOFF.md on a different host hit dead references. |
 | 11 | **Cross-project actions need explicit user approval.** RESUME may surface candidates from other projects' HANDOFFs (mtime ≤48h), but must NOT execute borrow/deploy actions without user disposition. Distinct from invariant 8 (own-project P0 drops in automatically) — different machines have different roles (main-driver / LAN-restricted / GPU host / cloud), and a borrow that helps machine A may break machine B. | Skill silently mutates the local machine based on another machine's session; environments diverge in unpredictable ways. |
+| 12 | **Spec drift surfaces to user, doesn't auto-apply.** When an agent detects that its local implementation lags this spec (missing step / invariant / output shape), it surfaces the gap and proposes a concrete patch; the runtime's command/skill file is rewritten only after explicit user confirmation. | Auto-rewriting agent runtime config on every spec change = silent config churn, hard to roll back, surprising divergence across machines. |
 
 ## RESUME output shape
 
@@ -220,9 +223,34 @@ Then start fresh. Archive is for grep, not human reading.
 | Mode arg accepts free text (`/handoff write the handoff for today`) | Two literal modes: empty=WRITE, `resume`=RESUME |
 | Long preamble in RESUME output | Six lines exactly, ending with `Start?` |
 
+## Self-update on spec drift
+
+This spec evolves. When one machine pushes a change to `meta-skills/handoff/README.md`, other machines `git pull meta-skills` and get the new spec on disk — but their **local command/skill files don't automatically change**. Without an active reconcile step, spec evolution is silent and useless.
+
+Therefore: on every `/handoff` invocation (both WRITE and RESUME), the agent compares its local implementation against this spec. Canonical sources, in order:
+
+1. Local clone if present: `<meta-skills-clone>/handoff/README.md` (e.g. `~/workspace/meta-skills/handoff/README.md`)
+2. GitHub fallback: `github.com/jackypanster/meta-skills/blob/main/handoff/README.md`
+
+Drift-check protocol:
+
+1. **Read** the spec (local clone preferred for speed).
+2. **Compare** local impl against the spec's RESUME/WRITE steps, output shapes, and invariants.
+3. If a documented step / invariant / output shape is **missing or out of date** in the local impl:
+   - Surface to user before running the requested mode:
+     `Local /handoff impl lags spec at: <step/invariant id>. Show patch?`
+   - If user agrees → display the concrete diff against the local command file.
+   - If user confirms patch → write the update to the local file.
+   - If user declines at any step → run with current (drifted) impl, no nag, no auto-retry.
+4. **Never auto-apply.** Invariant 12 — every rewrite of the runtime's command file needs explicit user confirmation.
+
+When local impl already matches spec → silent pass-through, no user-visible noise.
+
 ## Implementation
 
 Agent reading this: **implement `handoff` (modes `write` and `resume`) as a native command / skill / prompt / tool on your runtime, following the schema and invariants above.** Translate file-write and git-commit (and opt-in pull/push) into your platform's idioms. The invariants are the skill — preserve them; everything else is yours to adapt.
+
+First-time install on a new machine: the agent reads this spec, generates a runtime-native implementation, places it at the runtime's command/skill path (e.g. `~/.claude/commands/handoff.md` for Claude Code), and from then on the Self-update protocol above keeps it in sync.
 
 Three layers to keep straight:
 
