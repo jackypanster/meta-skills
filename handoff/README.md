@@ -9,7 +9,7 @@ modes:
   write:
     arg: (empty) — default
     when: end of day
-    does: capture today's outcomes + tomorrow's prioritized TODO into HANDOFF.md, show diff, commit locally (always). If a remote is configured AND reachable, also `git push` — failure surfaces as warning but does NOT fail WRITE.
+    does: capture today's outcomes + this year's completed goals + tomorrow's prioritized TODO into HANDOFF.md, keep it concise, show diff, commit locally (always). If a remote is configured AND reachable, also `git push` — failure surfaces as warning but does NOT fail WRITE.
   resume:
     arg: resume
     when: next session start
@@ -56,6 +56,11 @@ If tomorrow-you might also be on a **different machine** (multi-host workflow), 
 1. **<topic / ticket / artifact>** — <one-line outcome with concrete path or URL>
 2. ...
 
+## Year-to-date completed goals
+
+1. **<goal>** — <concise done signal with concrete artifact path or URL; completed <YYYY-MM-DD or month>>
+2. ...
+
 ## Tomorrow's TODO
 
 ### P0 — must-do first thing  (≤3 items, ~30min each)
@@ -90,15 +95,16 @@ Drop any of these and the skill degrades to free-text journal.
 
 | # | Rule | Failure mode if violated |
 |---|------|--------------------------|
-| 1 | P0 ≤ 3 items. Demote excess to P1. | "Everything is P0" → nothing is. Tomorrow-you stalls choosing. |
-| 2 | Each task line starts with concrete action, not category. Bad: `API key 安全`. Good: `Rotate NVIDIA API key — revoke nvapi-Mzc... in NGC console, gen new, write ~/.hermes/.env`. | Tomorrow-you re-derives the action, loses 5min/task. |
-| 3 | Carry-over: items not marked ✓ flow into tomorrow at same priority; ✓ items drop. | TODO list either grows unbounded or silently loses work. |
-| 4 | Paths block includes machine / user / connect-method when remote. | Future-you SSHs in cold and can't reconstruct the path. |
-| 5 | Open questions are falsifiable (have a trigger condition or deadline). | Becomes "think about X" — pure journal, no action. |
-| 6 | **Local-first, sync best-effort.** Local commit is the durable boundary and always runs. If a remote is configured: WRITE additionally pushes (failure → warn with unpushed-commit count, NEVER fail WRITE); RESUME additionally pulls --ff-only (network failure → warn + fall back to local; ff-only divergence → STOP and surface, never auto-merge / rebase). | Failing WRITE on push error destroys content the user just spent the day producing. Auto-merging cross-host divergence silently corrupts handoff state. Refusing RESUME because the network is down leaves the user with no recoverable session. |
-| 7 | RESUME drops into action without asking. Stop only for human authorization (key rotation, destructive migration, paid API spend). | Skill becomes a confirmation prompt, defeats the cold-start purpose. |
-| 8 | One HANDOFF.md per project root. | Cross-project state bleeds, grep/archive break. |
-| 9 | **Runtime-agnostic format.** HANDOFF.md is plain Markdown, readable by any LLM/agent. No runtime-specific paths in templates (`.claude/`, `.codex/`, `~/.hermes/`...). | Skill couples to one runtime; other agents reading HANDOFF.md on a different host hit dead references. |
+| 1 | Keep the whole handoff concise: "What got done today" ≤5 bullets, "Year-to-date completed goals" ≤7 bullets, each one line unless a sub-bullet is essential. Move raw MR/commit lists and long audit trails to linked artifacts, not HANDOFF.md. | The file becomes a journal/audit log; future-you has to summarize before acting. |
+| 2 | P0 ≤ 3 items. Demote excess to P1. | "Everything is P0" → nothing is. Tomorrow-you stalls choosing. |
+| 3 | Each task line starts with concrete action, not category. Bad: `API key 安全`. Good: `Rotate NVIDIA API key — revoke nvapi-Mzc... in NGC console, gen new, write ~/.hermes/.env`. | Tomorrow-you re-derives the action, loses 5min/task. |
+| 4 | Carry-over: items not marked ✓ flow into tomorrow at same priority; ✓ items drop. | TODO list either grows unbounded or silently loses work. |
+| 5 | Paths block includes machine / user / connect-method when remote. | Future-you SSHs in cold and can't reconstruct the path. |
+| 6 | Open questions are falsifiable (have a trigger condition or deadline). | Becomes "think about X" — pure journal, no action. |
+| 7 | **Local-first, sync best-effort.** Local commit is the durable boundary and always runs. If a remote is configured: WRITE additionally pushes (failure → warn with unpushed-commit count, NEVER fail WRITE); RESUME additionally pulls --ff-only (network failure → warn + fall back to local; ff-only divergence → STOP and surface, never auto-merge / rebase). | Failing WRITE on push error destroys content the user just spent the day producing. Auto-merging cross-host divergence silently corrupts handoff state. Refusing RESUME because the network is down leaves the user with no recoverable session. |
+| 8 | RESUME drops into action without asking. Stop only for human authorization (key rotation, destructive migration, paid API spend). | Skill becomes a confirmation prompt, defeats the cold-start purpose. |
+| 9 | One HANDOFF.md per project root. | Cross-project state bleeds, grep/archive break. |
+| 10 | **Runtime-agnostic format.** HANDOFF.md is plain Markdown, readable by any LLM/agent. No runtime-specific paths in templates (`.claude/`, `.codex/`, `~/.hermes/`...). | Skill couples to one runtime; other agents reading HANDOFF.md on a different host hit dead references. |
 
 ## RESUME output shape
 
@@ -120,7 +126,8 @@ When drafting tomorrow's TODO, pull from (in order):
 1. Yesterday's `HANDOFF.md` — preserve open P1/P2 unless session shows progress
 2. `git log` since 12h ago, `git status --short`
 3. Session context: tasks worked, blockers hit, paths touched, decisions made, machines/services involved
-4. Any task-tracking surface the runtime exposes (TaskList, todo state, etc.)
+4. Current-year completed goals from prior handoffs/session context only; do not invent goals from vague history. Keep this as a stable YTD milestone list, not a daily changelog.
+5. Any task-tracking surface the runtime exposes (TaskList, todo state, etc.)
 
 ## Sync — local-first, best-effort
 
