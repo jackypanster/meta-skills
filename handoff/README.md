@@ -13,7 +13,7 @@ modes:
   resume:
     arg: resume
     when: next session start
-    does: if remote configured AND reachable, `git pull --ff-only` first (stop on divergence; warn-and-continue on network failure). Then read yesterday's HANDOFF.md, emit ≤6-line summary, drop into first unfinished P0 without asking (unless P0 needs human authorization for key rotation / destructive migration / paid API spend).
+    does: if remote configured AND reachable, `git pull --ff-only` first (stop on divergence; warn-and-continue on network failure). Then read yesterday's HANDOFF.md, emit ≤6-line summary. After user confirms with `Start?`, if other projects in the store have HANDOFFs modified in the last 48h, surface cross-project borrow/deploy candidates and WAIT for user approval before executing them — separate from own-project P0, which still drops in without asking (unless P0 needs human authorization for key rotation / destructive migration / paid API spend).
 state-files:
   active: <handoff-store>/<project>/HANDOFF.md
   archive: <handoff-store>/<project>/archive/<YYYY-MM-DD>.md
@@ -89,6 +89,8 @@ Uncommitted:
 
 Section headers can be in any language — pick one and keep it stable across handoffs in the same project so grep continuity holds.
 
+`What got done today` doubles as the **cross-machine / cross-runtime bulletin**: other agents reading another project's HANDOFF via the Cross-project surface in RESUME pull the first 1–2 bullets to judge whether to borrow or deploy. Write the bullets for an LLM/agent on a different host (concrete artifact path, command, JD-ID), not for human reflection.
+
 ## Invariants
 
 Drop any of these and the skill degrades to free-text journal.
@@ -105,6 +107,7 @@ Drop any of these and the skill degrades to free-text journal.
 | 8 | RESUME drops into action without asking. Stop only for human authorization (key rotation, destructive migration, paid API spend). | Skill becomes a confirmation prompt, defeats the cold-start purpose. |
 | 9 | One HANDOFF.md per project root. | Cross-project state bleeds, grep/archive break. |
 | 10 | **Runtime-agnostic format.** HANDOFF.md is plain Markdown, readable by any LLM/agent. No runtime-specific paths in templates (`.claude/`, `.codex/`, `~/.hermes/`...). | Skill couples to one runtime; other agents reading HANDOFF.md on a different host hit dead references. |
+| 11 | **Cross-project actions need explicit user approval.** RESUME may surface candidates from other projects' HANDOFFs (mtime ≤48h), but must NOT execute borrow/deploy actions without user disposition. Distinct from invariant 8 (own-project P0 drops in automatically) — different machines have different roles (main-driver / LAN-restricted / GPU host / cloud), and a borrow that helps machine A may break machine B. | Skill silently mutates the local machine based on another machine's session; environments diverge in unpredictable ways. |
 
 ## RESUME output shape
 
@@ -117,6 +120,43 @@ First P0: <task title>
   → <first concrete action: cmd / path / file>
   Blocked? <yes/no — only if waiting on external resource>
 Start?
+```
+
+## Cross-project surface (RESUME, post-`Start?`)
+
+After the user answers `Start?` and **before** dropping into own-project P0, scan
+`<handoff-store>/*/HANDOFF.md` for projects other than the current one with
+mtime ≤48h. This is the channel by which agents on different machines /
+different runtimes notice each other's outcomes (new skills, new tools, new
+patterns) and propose borrowing or deploying them locally.
+
+Steps:
+
+1. Enumerate `<handoff-store>/*/HANDOFF.md`, exclude the current project,
+   filter to mtime ≤48h.
+2. For each, read "What got done today" (first 1–2 bullets).
+3. Judge **borrow / deploy value against THIS machine's role and environment**
+   — main-driver vs LAN-restricted vs GPU host vs cloud, etc. Machine role
+   comes from the runtime's own context (SOUL.md, memory store, env). Skip
+   items already present locally or irrelevant to the role.
+4. List surviving items as numbered **concrete actions** (clone X, install
+   skill Y, port pattern Z) — not vague "consider".
+5. **Wait for user approval before executing.** User picks ("1,3" / "skip" /
+   "all"). Skipped candidates drop; next RESUME cycle will resurface them if
+   still active in source HANDOFFs.
+6. Execute approved actions, then drop into own-project P0.
+
+If no candidates survive (no other projects, all >48h old, or nothing matches
+this machine's role) — emit nothing. Silence is the default.
+
+Output format (only when at least one candidate exists, appended after the
+six-line block once the user has answered `Start?`):
+
+```
+Cross-project (last 48h):
+  [1] <project>: <one-line outcome> — <concrete action for this machine>
+  [2] ...
+Approve (e.g. "1,3" / "skip" / "all"):
 ```
 
 ## WRITE collection signals
